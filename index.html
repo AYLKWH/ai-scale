@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AI 秤台助手</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1f7a4d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="AI 秤台">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+/* 布局：上面是秤一样的 PLU 显示屏，中间摄像头画面，下面是大按钮 */
+:root {
+  --bg: #f3f6f2; --surface: #ffffff; --line: #dde5dc; --fg: #17211b; --muted: #5e6d63;
+  --accent: #1f7a4d; --accent-fg: #ffffff; --lcd: #13241a; --lcd-fg: #9df5b8; --lcd-dim: #5b8c6b;
+  --warn: #a35a00; --chip: #e7efe6;
+  --font-body: system-ui, -apple-system, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  --font-num: "DIN Alternate", "Bahnschrift", "Roboto Condensed", "Arial Narrow", system-ui, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1612; --surface: #18221c; --line: #26342b; --fg: #e6efe8; --muted: #93a598;
+    --accent: #3fbf7f; --accent-fg: #06150c; --lcd: #07110b; --lcd-fg: #a6ffc2; --lcd-dim: #4f7d5e;
+    --warn: #f0a640; --chip: #213027; color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; min-height: 100%; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px;
+  padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right))
+           max(20px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none;
+}
+.app { max-width: 560px; margin: 0 auto; display: grid; gap: 12px; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+h1 { font-size: 18px; margin: 0; }
+.status { font-size: 12.5px; color: var(--muted); text-align: right; }
+.status.warn { color: var(--warn); }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.lcd {
+  background: var(--lcd); color: var(--lcd-fg); border-radius: 14px; padding: 12px 16px 10px;
+  display: grid; grid-template-columns: 1fr auto; gap: 0 12px; align-items: end; min-height: 118px;
+}
+.lcd .cap { grid-column: 1 / -1; font-size: 12px; letter-spacing: .12em; color: var(--lcd-dim); }
+.lcd .plu { font-family: var(--font-num); font-weight: 700; font-size: 72px; line-height: 1; font-variant-numeric: tabular-nums; }
+.lcd .plu.idle { color: var(--lcd-dim); }
+.lcd .price { font-family: var(--font-num); font-size: 20px; text-align: right; font-variant-numeric: tabular-nums; }
+.lcd .name { grid-column: 1 / -1; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+
+.cam { position: relative; border-radius: 14px; overflow: hidden; background: #000; aspect-ratio: 4 / 3; max-width: 100%; }
+.cam video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cam .frame { position: absolute; inset: 50% auto auto 50%; width: 72%; aspect-ratio: 1; transform: translate(-50%, -50%);
+  border: 2px dashed rgba(255,255,255,.55); border-radius: 12px; pointer-events: none; max-height: 92%; }
+.cam .msg { position: absolute; left: 0; right: 0; bottom: 0; padding: 8px 12px; font-size: 14px; color: #fff;
+  background: linear-gradient(transparent, rgba(0,0,0,.65)); }
+.cam .start { position: absolute; inset: 0; display: grid; place-items: center; gap: 8px; color: #fff; background: #1a1f1c;
+  border: 0; width: 100%; cursor: pointer; font-size: 17px; font-weight: 600; text-align: center; padding: 16px; }
+
+.list { display: grid; gap: 8px; }
+.cand {
+  display: grid; grid-template-columns: 74px 1fr auto; align-items: center; gap: 2px 12px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px;
+  text-align: left; cursor: pointer; width: 100%; min-height: 60px;
+}
+.cand.top { border-color: var(--accent); box-shadow: inset 4px 0 0 var(--accent); }
+.cand .n { font-family: var(--font-num); font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.cand .t { min-width: 0; }
+.cand .t b { display: block; font-weight: 600; font-size: 15px; overflow-wrap: anywhere; }
+.cand .t small { color: var(--muted); font-size: 12.5px; }
+.meter { width: 46px; height: 6px; border-radius: 3px; background: var(--chip); overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--accent); }
+.pct { font-size: 12px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+h2 { font-size: 13px; color: var(--muted); font-weight: 500; margin: 0 0 8px; }
+
+.btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.btn { border-radius: 12px; min-height: 48px; border: 1.5px solid var(--accent); background: var(--surface);
+  color: var(--accent); font-weight: 600; cursor: pointer; padding: 6px 10px; }
+.btn.solid { background: var(--accent); color: var(--accent-fg); }
+.btn:disabled { opacity: .45; }
+.search input { width: 100%; font: inherit; font-size: 17px; padding: 12px 14px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--fg); -webkit-user-select: text; user-select: text; }
+.hint { color: var(--muted); font-size: 13.5px; margin: 0; line-height: 1.6; }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }
+summary { cursor: pointer; font-weight: 600; }
+details .btns { margin-top: 10px; }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(18px + env(safe-area-inset-bottom));
+  background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 999px; font-size: 14px;
+  max-width: calc(100% - 32px); display: flex; gap: 14px; align-items: center; z-index: 10; }
+.toast button { background: none; border: 0; color: inherit; font-weight: 700; text-decoration: underline; padding: 0; cursor: pointer; }
+input[type=file] { display: none; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>AI 秤台助手</h1>
+    <div class="status" id="status">正在加载 AI 模型…</div>
+  </header>
+
+  <div class="lcd" aria-live="polite">
+    <div class="cap">在秤上输入 PLU</div>
+    <div class="plu idle" id="lcdPlu">----</div>
+    <div class="price" id="lcdPrice"></div>
+    <div class="name" id="lcdName">把商品放上秤台</div>
+  </div>
+
+  <div class="cam">
+    <video id="video" playsinline muted autoplay></video>
+    <div class="frame"></div>
+    <div class="msg" id="camMsg">准备中…</div>
+    <button class="start" id="startBtn" type="button" hidden>点这里开启摄像头</button>
+  </div>
+
+  <section id="candSec" hidden>
+    <h2>AI 猜是这些，点对的那个（点了就会记住）</h2>
+    <div class="list" id="candList"></div>
+  </section>
+
+  <div class="btns">
+    <button class="btn" id="emptyBtn" type="button">学空秤</button>
+    <button class="btn" id="moreBtn" type="button" disabled>再学一张</button>
+  </div>
+
+  <section class="search">
+    <h2>都不对？输入 PLU 或商品名</h2>
+    <input id="q" type="search" inputmode="search" placeholder="例如 319 或 melon" autocomplete="off">
+    <div class="list" id="results" style="margin-top:8px"></div>
+  </section>
+
+  <details>
+    <summary>备份与同步</summary>
+    <p class="hint" style="margin-top:8px">学习记录存在这台手机里。导出成文件，再在另一台手机导入，两台就认得一样的商品（会合并，不会覆盖）。</p>
+    <div class="btns">
+      <button class="btn" id="exportBtn" type="button">导出学习记录</button>
+      <button class="btn" id="importBtn" type="button">导入学习记录</button>
+    </div>
+    <input type="file" id="importFile" accept=".json,application/json">
+    <div class="btns">
+      <button class="btn" id="clearBtn" type="button">清空学习记录</button>
+    </div>
+  </details>
+
+  <p class="hint">
+    第一次用：秤台空着时按「学空秤」两三次；然后把商品放上去，用搜索框找到它点一下，再按几次「再学一张」（每次转动一下商品）。
+    之后 AI 会自动列出商品，点对的那个，在友声秤上输入大字显示的 PLU 就行。
+  </p>
+</div>
+<div class="toast" id="toast" hidden><span id="toastText"></span><button id="toastBtn" type="button" hidden></button></div>
+
+<script src="tf.min.js"></script>
+<script>
+"use strict";
+// ================= MobileNetV2 特征提取 =================
+function halfToFloat(u16) {
+  const out = new Float32Array(u16.length);
+  for (let k = 0; k < u16.length; k++) {
+    const h = u16[k], s = h & 0x8000 ? -1 : 1, e = (h >> 10) & 31, f = h & 1023;
+    out[k] = e === 0 ? s * Math.pow(2, -14) * (f / 1024)
+           : e === 31 ? (f ? NaN : s * Infinity)
+           : s * Math.pow(2, e - 15) * (1 + f / 1024);
+  }
+  return out;
+}
+function buildNet(spec, buf) {
+  const t = ([off, shape]) => tf.tensor(halfToFloat(new Uint16Array(buf, off, shape.reduce((a, b) => a * b, 1))), shape, "float32");
+  const ops = spec.ops.map(o => o.w ? Object.assign({}, o, { W: t(o.w), B: t(o.b) }) : o);
+  return x => tf.tidy(() => {
+    const v = { [spec.input]: x };
+    for (const o of ops) {
+      const a = v[o.i];
+      if (o.op === "conv" || o.op === "dw") {
+        const p = o.p ? tf.pad(a, [[0, 0], [o.p, o.p], [o.p, o.p], [0, 0]]) : a;
+        v[o.o] = tf.add(o.op === "conv" ? tf.conv2d(p, o.W, o.s, "valid") : tf.depthwiseConv2d(p, o.W, o.s, "valid"), o.B);
+      } else if (o.op === "relu6") v[o.o] = tf.clipByValue(a, 0, 6);
+      else if (o.op === "add") v[o.o] = tf.add(a, v[o.j]);
+      else if (o.op === "gap") v[o.o] = tf.mean(a, [1, 2]);
+    }
+    return v.feat;
+  });
+}
+
+// ================= 设置 =================
+const EMPTY = "__EMPTY__", MODEL = "mnv2", DIM = 1280;
+const MAX_PER_PLU = 40;      // 每个商品最多记住几份特征 (每张照片 = 原图 + 镜像 2 份)
+const TOP_K = 5, MIN_SCORE = 0.4, SCAN_MS = 350, SMOOTH = 3;
+const EMPTY_MIN = 0.8;       // 和“空秤”相似度要这么高才算空秤
+const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
+
+const $ = id => document.getElementById(id);
+const S = {
+  net: null, products: [], byPlu: new Map(), mem: new Map(), // plu -> {codes, vecs}
+  recent: [], cands: [], empty: true, emptyStreak: 0, lastPlu: null, shownPlu: null, undo: null,
+  stream: null, scanning: false, wake: null,
+};
+
+// ================= 小工具 =================
+function setStatus(t, warn) { $("status").textContent = t; $("status").classList.toggle("warn", !!warn); }
+function photos(m) { return m ? Math.ceil(m.codes.length / 2) : 0; }
+function refreshStatus() {
+  if (!S.net) return;
+  let items = 0, n = 0;
+  for (const [plu, m] of S.mem) { if (plu !== EMPTY) items++; n += photos(m); }
+  setStatus(`已学 ${items} 种商品 · ${n} 张` + (S.mem.has(EMPTY) ? "" : " · 还没学空秤"), !S.mem.has(EMPTY));
+}
+let toastTimer;
+function toast(text, btnText, onBtn) {
+  $("toastText").textContent = text;
+  const b = $("toastBtn"); b.hidden = !btnText; b.textContent = btnText || ""; b.onclick = onBtn || null;
+  $("toast").hidden = false; clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { $("toast").hidden = true; }, btnText ? 6000 : 2500);
+}
+function normalize(v) { let s = 0; for (let i = 0; i < v.length; i++) s += v[i] * v[i]; s = Math.sqrt(s) || 1; for (let i = 0; i < v.length; i++) v[i] /= s; return v; }
+function encode(v) {
+  let m = 0; for (const x of v) m = Math.max(m, Math.abs(x));
+  const b = new Int8Array(v.length); for (let i = 0; i < v.length; i++) b[i] = Math.round(v[i] / (m || 1) * 127);
+  let s = ""; const u = new Uint8Array(b.buffer); for (let i = 0; i < u.length; i++) s += String.fromCharCode(u[i]);
+  return btoa(s);
+}
+function decode(code) {
+  const s = atob(code), v = new Float32Array(s.length);
+  for (let i = 0; i < s.length; i++) v[i] = (s.charCodeAt(i) << 24) >> 24;
+  return normalize(v);
+}
+function fmtPrice(p) { return p && p[2] ? `RM ${p[2]}/${p[3] || "kg"}` : ""; }
+
+// ================= 本机存储 (IndexedDB) =================
+const store = (() => {
+  let dbp = null;
+  function open() {
+    if (!dbp) dbp = new Promise((res, rej) => {
+      const r = indexedDB.open("ai-plu", 1);
+      r.onupgradeneeded = () => r.result.createObjectStore("plu", { keyPath: "plu" });
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+    return dbp;
+  }
+  async function tx(mode, fn) {
+    const db = await open();
+    return new Promise((res, rej) => {
+      const t = db.transaction("plu", mode), os = t.objectStore("plu"), out = fn(os);
+      t.oncomplete = () => res(out && out.result); t.onerror = () => rej(t.error);
+    });
+  }
+  return {
+    all: () => tx("readonly", os => os.getAll()),
+    put: rec => tx("readwrite", os => os.put(rec)),
+    del: plu => tx("readwrite", os => os.delete(plu)),
+    clear: () => tx("readwrite", os => os.clear()),
+  };
+})();
+function save(plu) {
+  const m = S.mem.get(plu);
+  const p = m && m.codes.length ? store.put({ plu, model: MODEL, e: m.codes, t: Date.now() }) : store.del(plu);
+  p.catch(() => toast("保存失败：手机存储空间可能不够"));
+}
+async function loadMemory() {
+  try {
+    const recs = await store.all();
+    for (const r of recs || []) if (r.model === MODEL && Array.isArray(r.e)) S.mem.set(r.plu, { codes: r.e, vecs: r.e.map(decode) });
+  } catch (_) { toast("无法读取本机记录（是否开了无痕模式？）"); }
+}
+if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+
+// ================= 学习 / 识别 =================
+function learn(plu, feats) {
+  if (!S.mem.has(plu)) S.mem.set(plu, { codes: [], vecs: [] });
+  const m = S.mem.get(plu);
+  for (const v of feats) { m.vecs.push(v); m.codes.push(encode(v)); }
+  while (m.codes.length > MAX_PER_PLU) { m.codes.shift(); m.vecs.shift(); }
+  S.undo = { plu, n: feats.length };
+  save(plu); refreshStatus();
+}
+function undo() {
+  const u = S.undo; if (!u) return; S.undo = null;
+  const m = S.mem.get(u.plu); if (!m) return;
+  m.codes.splice(-u.n); m.vecs.splice(-u.n);
+  if (!m.codes.length) S.mem.delete(u.plu);
+  save(u.plu); refreshStatus(); showLcd(null); S.lastPlu = null; $("moreBtn").disabled = true;
+  toast("已撤销");
+}
+function rank(q) {
+  const res = [];
+  for (const [plu, m] of S.mem) {
+    let best = -1;
+    for (const v of m.vecs) { let s = 0; for (let i = 0; i < DIM; i++) s += v[i] * q[i]; if (s > best) best = s; }
+    if (plu === EMPTY || S.byPlu.has(plu)) res.push([plu, best]);
+  }
+  return res.sort((a, b) => b[1] - a[1]);
+}
+
+// ================= 摄像头 =================
+const crop = document.createElement("canvas"); crop.width = crop.height = 224;
+const cropCtx = crop.getContext("2d", { willReadFrequently: true });
+function grab(flip) {
+  const v = $("video"), w = v.videoWidth, h = v.videoHeight; if (!w) return null;
+  const s = Math.min(w, h) * 0.85; // 取画面中间 (虚线框)
+  cropCtx.setTransform(1, 0, 0, 1, 0, 0);
+  if (flip) { cropCtx.translate(224, 0); cropCtx.scale(-1, 1); }
+  cropCtx.drawImage(v, (w - s) / 2, (h - s) / 2, s, s, 0, 0, 224, 224);
+  const d = cropCtx.getImageData(0, 0, 224, 224).data, x = new Float32Array(224 * 224 * 3);
+  for (let i = 0, j = 0; i < d.length; i += 4) for (let k = 0; k < 3; k++) x[j++] = (d[i + k] / 255 - MEAN[k]) / STD[k];
+  return x;
+}
+async function featureOf(x) {
+  const t = tf.tensor(x, [1, 224, 224, 3]), f = S.net(t), v = await f.data();
+  t.dispose(); f.dispose(); return normalize(Float32Array.from(v));
+}
+async function currentFeatures() { // 学习用: 原图 + 镜像
+  const a = grab(false), b = grab(true); if (!a) return null;
+  return [await featureOf(a), await featureOf(b)];
+}
+async function startCamera() {
+  $("startBtn").hidden = true; $("camMsg").textContent = "正在打开摄像头…";
+  try {
+    S.stream = await navigator.mediaDevices.getUserMedia({
+      audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 960 } },
+    });
+    $("video").srcObject = S.stream; await $("video").play();
+    try { S.wake = await navigator.wakeLock.request("screen"); } catch (_) {}
+    if (!S.scanning) { S.scanning = true; scan(); }
+  } catch (e) {
+    $("startBtn").hidden = false;
+    $("startBtn").textContent = e && e.name === "NotAllowedError"
+      ? "摄像头被拒绝了。请在手机设置里允许本网页使用相机，然后点这里重试"
+      : "点这里开启摄像头";
+    $("camMsg").textContent = "";
+  }
+}
+function stopCamera() {
+  if (S.stream) S.stream.getTracks().forEach(t => t.stop());
+  S.stream = null; S.scanning = false;
+  if (S.wake) { S.wake.release().catch(() => {}); S.wake = null; }
+}
+document.addEventListener("visibilitychange", () => { document.hidden ? stopCamera() : (S.net && startCamera()); });
+
+// ================= 扫描循环 =================
+async function scan() {
+  while (S.scanning) {
+    const t0 = performance.now();
+    if (S.net && S.mem.size) {
+      const x = grab(false);
+      if (x) {
+        S.recent.push(await featureOf(x)); if (S.recent.length > SMOOTH) S.recent.shift();
+        const q = new Float32Array(DIM); for (const r of S.recent) for (let i = 0; i < DIM; i++) q[i] += r[i];
+        const ranked = rank(normalize(q));
+        S.empty = !ranked.length || (ranked[0][0] === EMPTY && ranked[0][1] >= EMPTY_MIN);
+        S.emptyStreak = S.empty ? S.emptyStreak + 1 : 0;
+        S.cands = S.empty ? [] : ranked.filter(([p, s]) => p !== EMPTY && s >= MIN_SCORE).slice(0, TOP_K);
+        renderScan();
+      }
+    } else if (S.net) {
+      $("camMsg").textContent = "AI 还没学过：秤台空着时先按「学空秤」";
+    }
+    await new Promise(r => setTimeout(r, Math.max(30, SCAN_MS - (performance.now() - t0))));
+  }
+}
+function renderScan() {
+  if (S.empty) {
+    $("camMsg").textContent = S.mem.has(EMPTY) ? "秤台空着 · 请放上商品" : "秤台空着时按「学空秤」";
+    $("candSec").hidden = true;
+    if (S.shownPlu && S.emptyStreak >= 3) showLcd(null); // 连续约 1 秒都是空秤 = 商品拿走了，清掉大字
+    return;
+  }
+  $("camMsg").textContent = S.cands.length ? "认出来了，点下面对的商品" : "不认识这个商品，用搜索框教它";
+  $("candSec").hidden = !S.cands.length;
+  const list = $("candList"), key = S.cands.map(c => c[0]).join(",");
+  if (list.dataset.key !== key) { // 商品顺序变了才重画，避免手指点歪
+    list.dataset.key = key; list.replaceChildren(...S.cands.map(([p, s], i) => candButton(p, s, i === 0)));
+  } else {
+    S.cands.forEach(([, s], i) => { const pct = Math.round(Math.max(0, s) * 100), el = list.children[i];
+      el.querySelector(".meter i").style.width = pct + "%"; el.querySelector(".pct").textContent = pct + "%"; });
+  }
+}
+
+// ================= 界面 =================
+function showLcd(plu) {
+  const p = plu && S.byPlu.get(plu); S.shownPlu = p ? plu : null;
+  $("lcdPlu").textContent = p ? p[0] : "----"; $("lcdPlu").classList.toggle("idle", !p);
+  $("lcdPrice").textContent = p ? fmtPrice(p) : ""; $("lcdName").textContent = p ? p[1] : "把商品放上秤台";
+}
+function candButton(plu, score, top) {
+  const p = S.byPlu.get(plu), b = document.createElement("button");
+  b.type = "button"; b.className = "cand" + (top ? " top" : "");
+  const n = document.createElement("span"); n.className = "n"; n.textContent = plu;
+  const t = document.createElement("span"); t.className = "t";
+  const nb = document.createElement("b"); nb.textContent = p ? p[1] : "";
+  const sm = document.createElement("small"); sm.textContent = fmtPrice(p); t.append(nb, sm);
+  const r = document.createElement("span");
+  if (score != null) {
+    const pct = Math.round(Math.max(0, score) * 100);
+    r.innerHTML = `<div class="meter"><i style="width:${pct}%"></i></div><div class="pct">${pct}%</div>`;
+  }
+  b.append(n, t, r); b.addEventListener("click", () => choose(plu)); return b;
+}
+async function choose(plu) {
+  showLcd(plu); S.lastPlu = plu; S.emptyStreak = 0; $("moreBtn").disabled = false;
+  $("q").value = ""; $("results").replaceChildren(); $("q").blur();
+  const feats = S.stream ? await currentFeatures() : null;
+  if (feats) { learn(plu, feats); toast(`已记住 ${plu}`, "撤销", undo); }
+  else toast("摄像头没开，这次没学");
+  S.recent = [];
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+$("emptyBtn").addEventListener("click", async () => {
+  const f = await currentFeatures(); if (!f) return toast("摄像头还没开");
+  learn(EMPTY, f); showLcd(null); toast(`已学空秤（${photos(S.mem.get(EMPTY))} 张）`, "撤销", undo);
+});
+$("moreBtn").addEventListener("click", async () => {
+  if (!S.lastPlu) return;
+  const f = await currentFeatures(); if (!f) return toast("摄像头还没开");
+  learn(S.lastPlu, f); toast(`${S.lastPlu} 共 ${photos(S.mem.get(S.lastPlu))} 张`, "撤销", undo);
+});
+$("startBtn").addEventListener("click", startCamera);
+$("q").addEventListener("input", () => {
+  const q = $("q").value.trim().toLowerCase(), box = $("results"); box.replaceChildren(); if (!q) return;
+  const P = S.products;
+  const hits = P.filter(p => p[0] === q).concat(P.filter(p => p[0] !== q && (p[0].startsWith(q) || p[1].toLowerCase().includes(q)))).slice(0, 8);
+  if (!hits.length) { const e = document.createElement("p"); e.className = "hint"; e.textContent = "找不到这个商品"; box.append(e); return; }
+  hits.forEach(p => box.append(candButton(p[0], null, false)));
+});
+
+// ---- 备份与同步 ----
+$("exportBtn").addEventListener("click", () => {
+  const items = [...S.mem].map(([plu, m]) => ({ plu, e: m.codes }));
+  const blob = new Blob([JSON.stringify({ app: "ai-plu", model: MODEL, items })], { type: "application/json" });
+  const a = document.createElement("a"), d = new Date();
+  a.href = URL.createObjectURL(blob);
+  a.download = `AI秤台学习记录-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}.json`;
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+});
+$("importBtn").addEventListener("click", () => $("importFile").click());
+$("importFile").addEventListener("change", async e => {
+  const file = e.target.files[0]; e.target.value = ""; if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    if (data.app !== "ai-plu" || data.model !== MODEL) throw new Error("不是本 App 的学习记录");
+    let added = 0;
+    for (const { plu, e: codes } of data.items) {
+      if (!S.mem.has(plu)) S.mem.set(plu, { codes: [], vecs: [] });
+      const m = S.mem.get(plu), have = new Set(m.codes);
+      for (const c of codes) if (!have.has(c)) { m.codes.push(c); m.vecs.push(decode(c)); added++; }
+      while (m.codes.length > MAX_PER_PLU) { m.codes.shift(); m.vecs.shift(); }
+      save(plu);
+    }
+    refreshStatus(); toast(`已导入，新增 ${Math.ceil(added / 2)} 张`);
+  } catch (err) { toast("导入失败：" + err.message); }
+});
+let clearArmed = false;
+$("clearBtn").addEventListener("click", async () => {
+  if (!clearArmed) { clearArmed = true; $("clearBtn").textContent = "再按一次确认清空"; setTimeout(() => { clearArmed = false; $("clearBtn").textContent = "清空学习记录"; }, 4000); return; }
+  clearArmed = false; $("clearBtn").textContent = "清空学习记录";
+  await store.clear().catch(() => {}); S.mem.clear(); S.recent = []; refreshStatus(); showLcd(null); toast("已清空");
+});
+
+// ================= 启动 =================
+async function boot() {
+  try {
+    try { await tf.setBackend("webgl"); } catch (_) { await tf.setBackend("cpu"); }
+    await tf.ready();
+    const [spec, buf, products] = await Promise.all([
+      fetch("mnv2.json").then(r => r.json()),
+      fetch("mnv2.bin").then(r => r.arrayBuffer()),
+      fetch("products.json").then(r => r.json()),
+    ]);
+    S.products = products; S.byPlu = new Map(products.map(p => [p[0], p]));
+    S.net = buildNet(spec, buf);
+    const z = tf.zeros([1, 224, 224, 3]), f = S.net(z); await f.data(); z.dispose(); f.dispose(); // 预热
+    await loadMemory(); refreshStatus();
+    startCamera();
+  } catch (e) {
+    setStatus("加载失败：" + (e.message || e), true);
+  }
+}
+boot();
+if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "AI 秤台助手",
+  "short_name": "AI 秤台",
+  "description": "摄像头识别商品，显示友声秤 PLU 编号",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f3f6f2",
+  "theme_color": "#1f7a4d",
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
